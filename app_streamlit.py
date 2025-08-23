@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import os
+import pandas as pd
 
-# ← ここを修正：_load_dict ではなく load_dict を import
 from seimei_calc import load_dict, calc
 
 st.set_page_config(page_title="姓名判断（5格）", layout="centered")
 st.title("姓名判断（5格）")
 
-# 利用可能な辞書ファイルを列挙
 dict_files = [f for f in os.listdir(".") if f.startswith("kanji_master_") and f.endswith(".csv")]
 dict_files.sort()
 
@@ -22,23 +21,28 @@ with st.form("main_form"):
     submitted = st.form_submit_button("計算する")
 
 if submitted and dict_name:
-    # ← ここを修正：_load_dict → load_dict
     table = load_dict(dict_name)
     res = calc(family, given, table)
 
     st.subheader("結果")
-    # res は { "top","heart","foot","side","allv", ... } の想定
     st.metric("トップ（天格）", res.get("top", 0))
     st.metric("ハート（人格）", res.get("heart", 0))
     st.metric("フット（地格）", res.get("foot", 0))
 
-    # サイドの表示（表面/本質の内訳がある場合は括弧つきで表示）
     side_val = res.get("side", 0)
-    side_text = str(side_val)
     surface = res.get("side_surface")
     core = res.get("side_core")
     if surface is not None and core is not None:
         side_text = f"{side_val}（表面={surface}, 本質={core}）"
-
+    else:
+        side_text = str(side_val)
     st.metric("サイド（外格）", side_text)
+
     st.metric("オール（総格）", res.get("allv", 0))
+
+    # 文字ごとの画数内訳
+    bd = res.get("breakdown", [])
+    if bd:
+        df = pd.DataFrame(bd, columns=["区分", "文字", "画数"])
+        st.subheader("文字ごとの内訳")
+        st.table(df)
