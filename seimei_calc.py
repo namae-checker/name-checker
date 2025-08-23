@@ -54,7 +54,7 @@ def load_dict(csv_path: str) -> dict:
                 continue
             try:
                 d[k] = int(v)
-            except Exception:
+            except:
                 d[k] = 0
     return d
 
@@ -63,70 +63,92 @@ def stroke_for_char(ch: str, table: dict) -> int:
         return _KANJI_OVERRIDES[ch]
     return table.get(ch, 0)
 
-def strokes_of(name: str, table: dict, breakdown: list, role: str) -> int:
+def strokes_of(name: str, table: dict) -> int:
     total = 0
     for ch in name:
-        st = stroke_for_char(ch, table)
-        breakdown.append((role, ch, st))
-        total += st
+        total += stroke_for_char(ch, table)
     return total
+
+def _head_for_side(fchars, table) -> int:
+    """
+    サイド用『頭』：
+      - 姓が1文字のとき…霊数1（頭に1を置く）
+      - それ以外 … 姓の先頭字の画数
+    """
+    if not fchars:
+        return 0
+    if len(fchars) == 1:
+        return 1
+    return stroke_for_char(fchars[0], table)
+
+def _tail_for_side(gchars, table) -> int:
+    """
+    サイド用『ケツ』：
+      - 名が1文字のとき…霊数1（ケツに1を置く）
+      - それ以外 … 名の末字の画数
+    """
+    if not gchars:
+        return 0
+    if len(gchars) == 1:
+        return 1
+    return stroke_for_char(gchars[-1], table)
 
 def calc(family: str, given: str, table: dict):
     f = normalize_name(family)
     g = normalize_name(given)
-
     fchars = list(f)
     gchars = list(g)
 
-    add_head = 1 if len(fchars) == 1 else 0
-    add_tail = 1 if len(gchars) == 1 else 0
+    # 霊数（総格には含めない）
+    add_head = 1 if len(fchars) == 1 else 0   # 姓1文字→頭に+1（トップ/サイド用）
+    add_tail = 1 if len(gchars) == 1 else 0   # 名1文字→ケツに+1（フット/サイド用）
 
-    breakdown = []
-    top_base  = strokes_of(f, table, breakdown, role="姓")
-    foot_base = strokes_of(g, table, breakdown, role="名")
+    # トップ（天格）…姓の合計 +（姓1文字なら霊数1）
+    top = strokes_of(f, table) + add_head
 
-    # トップ・フット（霊数加味。総格には含めない）
-    top  = top_base  + add_head
-    foot = foot_base + add_tail
+    # フット（地格）…名の合計 +（名1文字なら霊数1）
+    foot = strokes_of(g, table) + add_tail
 
-    # ハート
+    # ハート（人格）…姓の末字 + 名の先頭字（霊数は含めない）
     if fchars and gchars:
         heart = stroke_for_char(fchars[-1], table) + stroke_for_char(gchars[0], table)
     else:
         heart = 0
 
-    # サイド
-    side_base = 0
-    if fchars:
-        side_base += stroke_for_char(fchars[0], table)
-    if gchars:
-        side_base += stroke_for_char(gchars[-1], table)
+    # サイド（外格）
+    head_side = _head_for_side(fchars, table)
+    tail_side = _tail_for_side(gchars, table)
 
-    side_surface = side_base   # デフォルト
-    side_core    = side_base
-
-    if fchars and len(gchars) >= 2:
-        head = stroke_for_char(fchars[0], table)
-        second = stroke_for_char(gchars[1], table)
-        last = stroke_for_char(gchars[-1], table)
-        side_surface = head + second
-        side_core    = head + last
-        side = max(side_surface, side_core)
+    # 表面：基本は「頭 + 名の2文字目」。名が1文字のときは「頭 + 1」、
+    # 名が2文字のときは「頭 + 名の2文字目」、
+    # 名が3文字以上なら「頭 + 名の2文字目」。
+    if len(gchars) == 0:
+        side_surface = head_side
+    elif len(gchars) == 1:
+        side_surface = head_side + 1
     else:
-        side = side_base
+        side_surface = head_side + stroke_for_char(gchars[1], table)
 
-    # オール（霊数は含めない）
-    allv = top_base + foot_base
+    # 本質：常に「頭 + ケツ」。名1文字ならケツ=1
+    side_essence = head_side + tail_side
+
+    # 採用値：名が3文字以上のときは max(表面, 本質)、それ以外は本質
+    if len(gchars) >= 3:
+        side_value = max(side_surface, side_essence)
+    else:
+        side_value = side_essence
+
+    # オール（総格）…姓＋名の合計（霊数は含めない）
+    allv = strokes_of(f, table) + strokes_of(g, table)
 
     return {
-        "top": top,
-        "heart": heart,
-        "foot": foot,
-        "side": side,
-        "side_surface": side_surface,
-        "side_core": side_core,
-        "allv": allv,
-        "breakdown": breakdown,  # [(役割, 文字, 画数), ...]
+        "トップ（天格）": top,
+        "ハート（人格）": heart,
+        "フット（地格）": foot,
+        "サイド（外格）": side_value,
+        "サイド_表面": side_surface,
+        "サイド_本質": side_essence,
+        "オール（総格）": allv,
     }
 
 def main():
