@@ -6,6 +6,7 @@ from seimei_calc import load_dict, calc
 st.set_page_config(page_title="姓名判断（5格）", layout="centered")
 st.title("姓名判断（5格）")
 
+# 辞書CSVの候補（kanji_master_*.csv）
 dict_files = [f for f in os.listdir(".") if f.startswith("kanji_master_") and f.endswith(".csv")]
 dict_files.sort()
 
@@ -20,16 +21,18 @@ with st.form("main_form"):
 
 if submitted and dict_name:
     table = load_dict(dict_name)
-    res = calc(args.family, args.given, table)
+    res = calc(family, given, table)  # ← argsではなく、上で入力した値を渡す
 
-side_text = str(res["side"])
-if res.get("side_alt"):
-    side_text = f"{res['サイド（外格）']}（表面={res['サイド（外格 表面）']}, 本質={res['サイド（外格 本質）']}）"
+    # サイドは表面・本質も併記（不要なら1行にしてOK）
+    side_text = (
+        f"{res['サイド（外格）']}（表面={res['サイド（外格 表面）']}, 本質={res['サイド（外格 本質）']}）"
+        if 'サイド（外格 表面）' in res and 'サイド（外格 本質）' in res
+        else str(res['サイド（外格）'])
+    )
 
-st.subheader("結果")
-st.metric("トップ（天格）", res["top"])
-st.metric("ハート（人格）", res["heart"])
-st.metric("フット（地格）", res["foot"])
-st.metric("サイド（外格）", side_text)
-st.metric("オール（総格）", res["allv"])
-
+    st.subheader("結果")
+    st.metric("トップ（天格）", res["トップ（天格）"])
+    st.metric("ハート（人格）", res["ハート（人格）"])
+    st.metric("フット（地格）", res["フット（地格）"])
+    st.metric("サイド（外格）", side_text)
+    st.metric("オール（総格）", res["オール（総格）"])
