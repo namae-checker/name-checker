@@ -5,7 +5,7 @@ import streamlit as st
 from seimei_calc import load_dict, calc
 
 st.set_page_config(page_title="姓名判断（5格）", layout="centered")
-st.title("姓名カウント")
+st.title("姓名判断（5格）")
 
 # 探索: 同ディレクトリにある kanji_master_*.csv から選択
 dict_files = sorted(
@@ -32,13 +32,10 @@ if submitted and dict_name:
 
     # サイド表示（3文字名の場合: 表面/本質 を併記）
     if "side_alt" in res:
-        surface, essence = res["side_alt"]（表面={surface}, 本質={essence}）'
-        side_text = f'{res["side"]}
+        surface, essence = res["side_alt"]
+        side_text = f'{res["side"]}（表面={surface}, 本質={essence}）'
     else:
         side_text = str(res["side"])
     st.metric("サイド（外格）", side_text)
 
     st.metric("オール（総格）", res["allv"])
-
-
-
