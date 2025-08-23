@@ -20,11 +20,15 @@ with st.form("main_form"):
 
 if submitted and dict_name:
     table = load_dict(dict_name)
-    res = calc(family.strip(), given.strip(), table)
+    res = calc(args.family, args.given, table)
 
-    st.subheader("結果")
-    st.metric("トップ（天格）", res["トップ（天格）"])
-    st.metric("ハート（人格）", res["ハート（人格）"])
-    st.metric("フット（地格）", res["フット（地格）"])
-    st.metric("サイド（外格）", res["サイド（外格）"])
-    st.metric("オール（総格）", res["オール（総格）"])
+side_text = str(res["side"])
+if res.get("side_alt"):
+    side_text = f'{res["side"]}（{res["side_alt"]}）'
+
+st.subheader("結果")
+st.metric("トップ（天格）", res["top"])
+st.metric("ハート（人格）", res["heart"])
+st.metric("フット（地格）", res["foot"])
+st.metric("サイド（外格）", side_text)
+st.metric("オール（総格）", res["allv"])
