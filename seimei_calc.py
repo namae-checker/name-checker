@@ -1,114 +1,71 @@
 # -*- coding: utf-8 -*-
 import argparse
 import csv
-import os
+import sys
 import unicodedata
+import os
 
-def _here(*p):
-    return os.path.join(os.path.dirname(__file__), *p)
-
-def _nfkc_strip(s: str) -> str:
-    return unicodedata.normalize("NFKC", (s or "")).strip()
-
-# ---------------- dictionary loaders ----------------
-
-def _load_main_dict(csv_path: str) -> dict:
-    d = {}
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        # strokes_old / strokes のどちらでも拾えるように
-        for r in reader:
-            k = _nfkc_strip(r.get("kanji"))
-            if not k:
-                continue
-            v = r.get("strokes_old")
-            if v is None:
-                v = r.get("strokes")
-            v = _nfkc_strip(v)
-            try:
-                d[k] = int(v)
-            except Exception:
-                d[k] = 0
-    return d
-
-def _load_overrides_chars() -> dict:
-    path = _here("kanji_overrides.csv")
+def _load_overrides() -> dict:
+    path = os.path.join(os.path.dirname(__file__), "kanji_overrides.csv")
     data = {}
     try:
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
             for row in csv.DictReader(f):
-                ch = _nfkc_strip(row.get("char"))
-                st = _nfkc_strip(row.get("strokes"))
+                ch = (row.get("char") or "").strip()
+                st = (row.get("strokes") or "").strip()
                 if ch and st:
                     try:
                         data[ch] = int(st)
-                    except Exception:
+                    except ValueError:
                         pass
     except FileNotFoundError:
         pass
     return data
 
-def _load_radical_strokes() -> dict:
+_KANJI_OVERRIDES = _load_overrides()
+
+# 追加：radicals_master.csv を読み込む（aliases を '|' で分割）
+def load_radicals_master(path: str) -> list[dict]:
     """
-    radicals_master.csv : radical,strokes_custom,aliases
-    - radical 名 → 画数
-    - aliases（'王|玉|⺩' のような表記）からも同じ画数で引けるようにする
+    radicals_master.csv
+      - header: radical,strokes_custom,aliases
+      - aliases: '王|玉|玊' のように '|' 区切り
     """
-    path = _here("radicals_master.csv")
+    items = []
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            radical = (r.get("radical") or "").strip()
+            st_str  = (r.get("strokes_custom") or "").strip()
+            al_raw  = (r.get("aliases") or "").strip()
+            if not radical or not st_str:
+                continue
+            try:
+                st = int(st_str)
+            except ValueError:
+                continue
+            aliases = [a.strip() for a in al_raw.split("|") if a.strip()]
+            items.append({"radical": radical, "strokes": st, "aliases": aliases})
+    return items
+
+# 追加：kanji_radicals.csv を読み込む（char->radical 自体 or 代表字 など）
+def load_kanji_radicals(path: str) -> dict:
+    """
+    kanji_radicals.csv
+      - header: char,radical
+      - 例: '理,王'
+    """
     d = {}
-    try:
-        with open(path, "r", encoding="utf-8-sig", newline="") as f:
-            for row in csv.DictReader(f):
-                rad = _nfkc_strip(row.get("radical"))
-                st  = _nfkc_strip(row.get("strokes_custom"))
-                if not rad or not st:
-                    continue
-                try:
-                    val = int(st)
-                except Exception:
-                    continue
-                d[rad] = val
-                # エイリアスも登録
-                aliases = _nfkc_strip(row.get("aliases"))
-                if aliases:
-                    for a in aliases.split("|"):
-                        a = _nfkc_strip(a)
-                        if a and a not in d:
-                            d[a] = val
-    except FileNotFoundError:
-        pass
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            ch = (r.get("char") or "").strip()
+            ra = (r.get("radical") or "").strip()
+            if ch and ra:
+                d[ch] = ra
     return d
 
-def _load_kanji_radicals() -> dict:
-    """
-    kanji_radicals.csv : (推奨) kanji,radical
-                       : 互換   char,radical でも可
-    """
-    path = _here("kanji_radicals.csv")
-    d = {}
-    try:
-        with open(path, "r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            # ヘッダ名のゆれに対応
-            kanji_key = "kanji" if "kanji" in reader.fieldnames else ("char" if "char" in reader.fieldnames else None)
-            radical_key = "radical" if "radical" in reader.fieldnames else None
-            if not kanji_key or not radical_key:
-                return d
-            for row in reader:
-                ch  = _nfkc_strip(row.get(kanji_key))
-                rad = _nfkc_strip(row.get(radical_key))
-                if ch and rad:
-                    d[ch] = rad
-    except FileNotFoundError:
-        pass
-    return d
-
-# global caches
-_KANJI_OVERRIDES = _load_overrides_chars()
-_RADICAL_STROKES = _load_radical_strokes()
-_KANJI_RADICALS  = _load_kanji_radicals()
-
-# 互換文字 / 繰り返し
+# 既存：異体字・々の展開
 VARIANT_MAP = {
     "禎": "祓",
     "琢": "琢",
@@ -118,7 +75,7 @@ VARIANT_MAP = {
 REPEAT_MARK = "々"
 
 def normalize_name(s: str) -> str:
-    s = unicodedata.normalize("NFKC", s or "")
+    s = unicodedata.normalize("NFKC", s)
     out = []
     for ch in s:
         ch = VARIANT_MAP.get(ch, ch)
@@ -127,80 +84,128 @@ def normalize_name(s: str) -> str:
         out.append(ch)
     return "".join(out)
 
-# ---------------- strokes ----------------
+# 既存：漢字辞書（常用など）
+def load_dict(csv_path: str) -> dict:
+    d = {}
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            k = (r.get("kanji") or "").strip()
+            v = (r.get("strokes_old") or "").strip()
+            if not k:
+                continue
+            try:
+                d[k] = int(v)
+            except Exception:
+                d[k] = 0
+    return d
 
-def stroke_for_char(ch: str, table: dict) -> int:
-    # 1) 文字個別オーバーライド
+# 追加：部首 → strokes を引くための逆引きテーブル（alias -> strokes）
+def build_alias_to_strokes(rad_master: list[dict]) -> dict:
+    alias2st = {}
+    for item in rad_master:
+        st = item["strokes"]
+        for a in item["aliases"]:
+            alias2st[a] = st
+    return alias2st
+
+# 文字1コの画数決定：オーバーライド > 部首指定 > 辞書
+def stroke_for_char(ch: str, table: dict,
+                    kr_map: dict | None = None,
+                    alias2st: dict | None = None) -> int:
+    # ① 文字単位のオーバーライド最優先
     if ch in _KANJI_OVERRIDES:
         return _KANJI_OVERRIDES[ch]
-    # 2) 部首 → 部首画数
-    rad = _KANJI_RADICALS.get(ch)
-    if rad:
-        # radical 名でも alias でも拾える
-        st = _RADICAL_STROKES.get(rad)
-        if isinstance(st, int):
-            return st
-    # 3) 通常辞書
+
+    # ② 部首指定があれば（kanji_radicals.csv -> alias を strokes に）
+    if kr_map and alias2st:
+        alias = kr_map.get(ch)
+        if alias:
+            alias = alias.strip()
+            # 例: '王' を '王|玉|玊' の各要素に分割済み dict で引く
+            if alias in alias2st:
+                return alias2st[alias]
+
+    # ③ 通常辞書
     return table.get(ch, 0)
 
-def strokes_of(name: str, table: dict) -> int:
-    return sum(stroke_for_char(ch, table) for ch in name)
+def strokes_of(name: str, table: dict,
+               kr_map: dict | None = None,
+               alias2st: dict | None = None) -> int:
+    return sum(stroke_for_char(ch, table, kr_map, alias2st) for ch in name)
 
-# ---------------- 5格 ----------------
-
-def calc(family: str, given: str, table: dict):
+def calc(family: str, given: str, table: dict,
+         kr_map: dict | None = None,
+         alias2st: dict | None = None):
     f = normalize_name(family)
     g = normalize_name(given)
     fchars = list(f)
     gchars = list(g)
 
-    add_head = 1 if len(fchars) == 1 else 0
-    add_tail = 1 if len(gchars) == 1 else 0
+    # 霊数ルール
+    add_head = 1 if len(fchars) == 1 else 0  # 姓1文字→頭+1（総格除外）
+    add_tail = 1 if len(gchars) == 1 else 0  # 名1文字→ケツ+1（総格除外）
 
-    top  = strokes_of(f, table) + add_head
-    foot = strokes_of(g, table) + add_tail
+    top  = strokes_of(f, table, kr_map, alias2st) + add_head
+    foot = strokes_of(g, table, kr_map, alias2st) + add_tail
 
+    heart = 0
     if fchars and gchars:
-        heart = stroke_for_char(fchars[-1], table) + stroke_for_char(gchars[0], table)
-    else:
-        heart = 0
+        heart = (
+            stroke_for_char(fchars[-1], table, kr_map, alias2st) +
+            stroke_for_char(gchars[0],  table, kr_map, alias2st)
+        )
 
-    # 外格：基本は「頭(姓先頭) + ケツ(名末字)」
-    side_real = 0
+    # サイド（外格）：基本=頭(姓先頭)+ケツ(名末字)
+    side_face = 0
     if fchars:
-        side_real += stroke_for_char(fchars[0], table)
+        side_face += stroke_for_char(fchars[0], table, kr_map, alias2st)
     if gchars:
-        side_real += stroke_for_char(gchars[-1], table)
+        side_face += stroke_for_char(gchars[-1], table, kr_map, alias2st)
 
-    # 3文字名の特例：表面＝頭 + 名の2文字目、本質＝頭 + 名の末字 → 大きい方を採用
-    side_face = None
+    # 3文字名は 表面=頭+名2文字目 / 本質=頭+名末字 → 最大値と内訳
     if len(gchars) >= 2 and fchars:
-        side_face = stroke_for_char(fchars[0], table) + stroke_for_char(gchars[1], table)
+        side_core = (
+            stroke_for_char(fchars[0], table, kr_map, alias2st) +
+            stroke_for_char(gchars[-1], table, kr_map, alias2st)
+        )
+        side = max(side_face, side_core)
+        side_alt = {"face": side_face, "core": side_core}
+    else:
+        side = side_face
+        side_alt = {"face": side_face, "core": side_face}
 
-    side = max(side_real, side_face) if side_face is not None else side_real
-    allv = strokes_of(f, table) + strokes_of(g, table)
+    allv = strokes_of(f, table, kr_map, alias2st) + strokes_of(g, table, kr_map, alias2st)
 
     return {
         "top": top,
         "heart": heart,
         "foot": foot,
         "side": side,
-        "side_face": side_face,
-        "side_real": side_real,
+        "side_alt": side_alt,  # 表示用：(表面=, 本質=)
         "allv": allv,
     }
 
-# ---------------- CLI ----------------
-
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("-d", "--dict", required=True, help="kanji_master_xxx.csv")
+    ap.add_argument("-d", "--dict", required=True)
+    ap.add_argument("--radicals-master", default="radicals_master.csv")
+    ap.add_argument("--kanji-radicals",  default="kanji_radicals.csv")
     ap.add_argument("-f", "--family", default="")
-    ap.add_argument("-g", "--given", default="")
+    ap.add_argument("-g", "--given",  default="")
     args = ap.parse_args()
 
-    table = _load_main_dict(args.dict)
-    res = calc(args.family, args.given, table)
+    table = load_dict(args.dict)
+
+    # 部首系の読み込み
+    rad_master = load_radicals_master(args.radicals_master)
+    alias2st   = build_alias_to_strokes(rad_master)
+    try:
+        kr_map = load_kanji_radicals(args.kanji_radicals)
+    except FileNotFoundError:
+        kr_map = {}
+
+    res = calc(args.family, args.given, table, kr_map, alias2st)
     for k, v in res.items():
         print(k, v)
 
