@@ -1,190 +1,138 @@
+# -*- coding: utf-8 -*-
 import argparse
 import csv
 import sys
 import unicodedata
 import os
 
-_DIGITS = {
-    "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10
-}
-
-def _read_csv(path):
-    data = []
-    with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            data.append({k: (v if v is not None else "").strip() for k, v in row.items()})
+def _load_overrides() -> dict:
+    path = os.path.join(os.path.dirname(__file__), "kanji_overrides.csv")
+    data = {}
+    try:
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                ch = row.get("char", "").strip()
+                st = row.get("strokes", "").strip()
+                if ch and st:
+                    try:
+                        data[ch] = int(st)
+                    except ValueError:
+                        pass
+    except FileNotFoundError:
+        pass
     return data
 
-def _load_table(csv_path):
-    d = {}
-    if not os.path.exists(csv_path):
-        return d
-    for r in _read_csv(csv_path):
-        k = r.get("kanji", "").strip()
-        v = r.get("strokes_old", "").strip()
-        if not k or not v:
-            continue
-        try:
-            d[k] = int(v)
-        except:
-            d[k] = 0
-    return d
+_KANJI_OVERRIDES = _load_overrides()
 
-def _load_kanji_overrides():
-    path = os.path.join(os.path.dirname(__file__), "kanji_overrides.csv")
-    d = {}
-    if not os.path.exists(path):
-        return d
-    for r in _read_csv(path):
-        ch = r.get("char", "").strip()
-        v = r.get("strokes", "").strip()
-        if ch and v:
-            try:
-                d[ch] = int(v)
-            except:
-                pass
-    return d
-
-def _load_radicals():
-    path = os.path.join(os.path.dirname(__file__), "radicals_master.csv")
-    d = {}
-    if not os.path.exists(path):
-        return d
-    for r in _read_csv(path):
-        rad = r.get("radical", "").strip()
-        v = r.get("strokes_custom", "").strip()
-        if rad and v:
-            try:
-                d[rad] = int(v)
-            except:
-                pass
-        aliases = r.get("aliases", "").strip()
-        if aliases:
-            for al in [a.strip() for a in aliases.split("|") if a.strip()]:
-                try:
-                    d[al] = int(v)
-                except:
-                    pass
-    return d
-
-def _load_radical_overrides():
-    path = os.path.join(os.path.dirname(__file__), "radical_overrides.csv")
-    d = {}
-    if not os.path.exists(path):
-        return d
-    for r in _read_csv(path):
-        ch = r.get("char", "").strip()
-        rad = r.get("radical", "").strip()
-        if ch and rad:
-            d[ch] = rad
-    return d
-
-_VARIANT_MAP = {
-    "髙": "高",
-    "﨑": "崎",
-    "邉": "辺",
-    "邊": "辺",
+VARIANT_MAP = {
+    "禎": "祓",
+    "琢": "琢",
+    "穀": "穀",
+    "祝": "祝",
 }
-_REPEAT = "々"
 
-def normalize_name(s):
-    s = unicodedata.normalize("NFKC", s or "")
-    out = []
+REPEAT_MARK = "々"
+
+def normalize_name(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s)
+    chars = []
     for ch in s:
-        ch = _VARIANT_MAP.get(ch, ch)
-        if ch == _REPEAT and out:
-            ch = out[-1]
-        out.append(ch)
-    return "".join(out)
+        ch = VARIANT_MAP.get(ch, ch)
+        if ch == REPEAT_MARK and chars:
+            ch = chars[-1]
+        chars.append(ch)
+    return "".join(chars)
 
-def stroke_for_char(ch, table, k_ovr, rad_map, rad_ovr):
-    if ch in _DIGITS:
-        return _DIGITS[ch]
-    if ch in k_ovr:
-        return k_ovr[ch]
-    if ch in rad_ovr:
-        rad = rad_ovr[ch]
-        if rad in rad_map:
-            return rad_map[rad]
+def load_dict(csv_path: str) -> dict:
+    d = {}
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            k = r.get("kanji", "").strip()
+            v = r.get("strokes_old", "").strip()
+            if not k:
+                continue
+            try:
+                d[k] = int(v)
+            except:
+                d[k] = 0
+    return d
+
+def stroke_for_char(ch: str, table: dict) -> int:
+    # ① 文字単位のオーバーライドが最優先
+    if ch in _KANJI_OVERRIDES:
+        return _KANJI_OVERRIDES[ch]
+    # ② 辞書の画数
     return table.get(ch, 0)
 
-def strokes_of(name, table):
+def strokes_of(name: str, table: dict) -> int:
     total = 0
-    k_ovr = _load_kanji_overrides()
-    rad_map = _load_radicals()
-    rad_ovr = _load_radical_overrides()
     for ch in name:
-        total += stroke_for_char(ch, table, k_ovr, rad_map, rad_ovr)
+        total += stroke_for_char(ch, table)
     return total
 
-def stroke_first_char(name, table):
-    if not name:
-        return 0
-    k_ovr = _load_kanji_overrides()
-    rad_map = _load_radicals()
-    rad_ovr = _load_radical_overrides()
-    return stroke_for_char(name[0], table, k_ovr, rad_map, rad_ovr)
-
-def stroke_last_char(name, table):
-    if not name:
-        return 0
-    k_ovr = _load_kanji_overrides()
-    rad_map = _load_radicals()
-    rad_ovr = _load_radical_overrides()
-    return stroke_for_char(name[-1], table, k_ovr, rad_map, rad_ovr)
-
-def calc(family, given, table):
+def calc(family: str, given: str, table: dict):
     f = normalize_name(family)
     g = normalize_name(given)
 
-    top = strokes_of(f, table)
-    foot = strokes_of(g, table)
+    fchars = list(f)
+    gchars = list(g)
 
-    heart = 0
-    if f and g:
-        heart = stroke_last_char(f, table) + stroke_first_char(g, table)
+    # 霊数ルール
+    add_head = 1 if len(fchars) == 1 else 0  # 姓が1文字→頭に +1（総格へは含めない）
+    add_tail = 1 if len(gchars) == 1 else 0  # 名が1文字→ケツに +1（総格へは含めない）
 
-    side_pair = stroke_first_char(f, table) + stroke_last_char(g, table)
-    side = side_pair
+    # トップ（天格）…姓の合計 + 霊数(頭)
+    top = strokes_of(f, table) + add_head
 
-    add_head = 1 if len(f) == 1 else 0
-    add_tail = 1 if len(g) == 1 else 0
+    # フット（地格）…名の合計 + 霊数(ケツ)
+    foot = strokes_of(g, table) + add_tail
 
-    top_side = top + add_head
-    foot_side = foot + add_tail
+    # ハート（人格）…姓の末字 + 名の先頭字
+    if fchars and gchars:
+        heart = stroke_for_char(fchars[-1], table) + stroke_for_char(gchars[0], table)
+    else:
+        heart = 0
 
-    allv = top + foot
+    # サイド（外格）
+    # 基本：頭（姓の先頭）とケツ（名の末字）の和。
+    side_base = 0
+    if fchars:
+        side_base += stroke_for_char(fchars[0], table)
+    if gchars:
+        side_base += stroke_for_char(gchars[-1], table)
+    # 3文字名の例外（「木原 由香里」型）：表面=頭+名の2文字目, 本質=頭+名の末字 → 最大値を採用
+    if len(gchars) >= 2:
+        side_alt = 0
+        if fchars:
+            side_alt += stroke_for_char(fchars[0], table)
+        side_alt += stroke_for_char(gchars[-1], table)
+        side = max(side_base, side_alt)
+    else:
+        side = side_base
+
+    # オール（総格）…姓＋名の合計。霊数は含めない
+    allv = strokes_of(f, table) + strokes_of(g, table)
 
     return {
-        "トップ(天格)": top_side,
-        "ハート(人格)": heart,
-        "フット(地格)": foot_side,
-        "サイド(外格)": max(top_side - heart, side, foot_side - heart),
-        "オール(総格)": allv,
-        "詳細": {
-            "姓": f,
-            "名": g,
-            "姓末": stroke_last_char(f, table),
-            "名頭": stroke_first_char(g, table),
-            "姓頭": stroke_first_char(f, table),
-            "名末": stroke_last_char(g, table),
-            "霊数姓": add_head,
-            "霊数名": add_tail
-        }
+        "トップ（天格）": top,
+        "ハート（人格）": heart,
+        "フット（地格）": foot,
+        "サイド（外格）": side,
+        "オール（総格）": allv,
     }
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--table", default="kanji_master_joyo.csv")
+    ap.add_argument("-d", "--dict", required=True, help="kanji_master_xxx.csv")
     ap.add_argument("-f", "--family", default="")
     ap.add_argument("-g", "--given", default="")
     args = ap.parse_args()
-    table = _load_table(args.table)
+
+    table = load_dict(args.dict)
     res = calc(args.family, args.given, table)
     for k, v in res.items():
-        if k == "詳細":
-            continue
         print(f"{k}: {v}")
 
 if __name__ == "__main__":
