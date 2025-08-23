@@ -3,6 +3,28 @@ import argparse
 import csv
 import sys
 import unicodedata
+import os
+
+def _load_overrides():
+    path = os.path.join(os.path.dirname(__file__), "kanji_overrides.csv")
+    data = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                ch = row.get("char")
+                st = row.get("strokes")
+                if ch and st:
+                    try:
+                        data[ch] = int(st)
+                    except ValueError:
+                        pass
+    except FileNotFoundError:
+        pass
+    return data
+
+_KANJI_OVERRIDES = _load_overrides()
+
 
 VARIANT_MAP = {
     "髙": "高",
@@ -42,6 +64,11 @@ def load_dict(csv_path: str) -> dict:
 def strokes_of(name: str, table: dict) -> int:
     total = 0
     for ch in name:
+        # まずオーバーライド（kanji_overrides.csv）を確認
+        if ch in _KANJI_OVERRIDES:
+            total += _KANJI_OVERRIDES[ch]
+            continue
+        # 通常の辞書を使う
         total += table.get(ch, 0)
     return total
 
