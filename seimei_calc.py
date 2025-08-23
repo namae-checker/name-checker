@@ -60,10 +60,8 @@ def load_dict(csv_path: str) -> dict:
     return d
 
 def stroke_for_char(ch: str, table: dict) -> int:
-    # ① 文字単位のオーバーライドが最優先
     if ch in _KANJI_OVERRIDES:
         return _KANJI_OVERRIDES[ch]
-    # ② 辞書の画数
     return table.get(ch, 0)
 
 def strokes_of(name: str, table: dict) -> int:
@@ -79,40 +77,27 @@ def calc(family: str, given: str, table: dict):
     fchars = list(f)
     gchars = list(g)
 
-    # 霊数ルール
-    add_head = 1 if len(fchars) == 1 else 0  # 姓が1文字→頭に +1（総格へは含めない）
-    add_tail = 1 if len(gchars) == 1 else 0  # 名が1文字→ケツに +1（総格へは含めない）
+    add_head = 1 if len(fchars) == 1 else 0
+    add_tail = 1 if len(gchars) == 1 else 0
 
-    # トップ（天格）…姓の合計 + 霊数(頭)
     top = strokes_of(f, table) + add_head
-
-    # フット（地格）…名の合計 + 霊数(ケツ)
     foot = strokes_of(g, table) + add_tail
 
-    # ハート（人格）…姓の末字 + 名の先頭字
     if fchars and gchars:
         heart = stroke_for_char(fchars[-1], table) + stroke_for_char(gchars[0], table)
     else:
         heart = 0
 
-    # サイド（外格）
-    # 基本：頭（姓の先頭）とケツ（名の末字）の和。
-    side_base = 0
+    # --- サイドの計算 ---
+    side_surface = 0
+    side_core = 0
     if fchars:
-        side_base += stroke_for_char(fchars[0], table)
-    if gchars:
-        side_base += stroke_for_char(gchars[-1], table)
-    # 3文字名の例外（「木原 由香里」型）：表面=頭+名の2文字目, 本質=頭+名の末字 → 最大値を採用
-    if len(gchars) >= 2:
-        side_alt = 0
-        if fchars:
-            side_alt += stroke_for_char(fchars[0], table)
-        side_alt += stroke_for_char(gchars[-1], table)
-        side = max(side_base, side_alt)
-    else:
-        side = side_base
+        if len(gchars) >= 2:
+            side_surface = stroke_for_char(fchars[0], table) + stroke_for_char(gchars[1], table)
+        if gchars:
+            side_core = stroke_for_char(fchars[0], table) + stroke_for_char(gchars[-1], table)
+    side = max(side_surface, side_core)
 
-    # オール（総格）…姓＋名の合計。霊数は含めない
     allv = strokes_of(f, table) + strokes_of(g, table)
 
     return {
@@ -120,6 +105,8 @@ def calc(family: str, given: str, table: dict):
         "ハート（人格）": heart,
         "フット（地格）": foot,
         "サイド（外格）": side,
+        "サイド（外格 表面）": side_surface,
+        "サイド（外格 本質）": side_core,
         "オール（総格）": allv,
     }
 
