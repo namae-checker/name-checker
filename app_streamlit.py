@@ -3,7 +3,7 @@ import os
 import streamlit as st
 from seimei_calc import calc, _load_dict
 
-st.set_page_config(page_title="姓名判断（5格）", layout="centered")
+st.set_page_config(page_title="姓名判断", layout="centered")
 st.title("姓名判断（5格）")
 
 # 利用可能な辞書ファイルをプルダウンに
@@ -37,3 +37,4 @@ if submitted and dict_name:
     st.metric("サイド（外格）", side_text)
 
     st.metric("オール（総格）", res["allv"])
+
