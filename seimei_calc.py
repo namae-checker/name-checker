@@ -31,7 +31,6 @@ VARIANT_MAP = {
     "穀": "穀",
     "祝": "祝",
 }
-
 REPEAT_MARK = "々"
 
 def normalize_name(s: str) -> str:
@@ -65,12 +64,9 @@ def stroke_for_char(ch: str, table: dict) -> int:
     return table.get(ch, 0)
 
 def strokes_of(name: str, table: dict) -> int:
-    total = 0
-    for ch in name:
-        total += stroke_for_char(ch, table)
-    return total
+    return sum(stroke_for_char(ch, table) for ch in name)
 
-def calc(family: str, given: str, table: dict):
+def calc(family: str, given: str, table: dict) -> dict:
     f = normalize_name(family)
     g = normalize_name(given)
 
@@ -88,31 +84,31 @@ def calc(family: str, given: str, table: dict):
     else:
         heart = 0
 
-    # --- サイドの計算 ---
-    side_surface = 0
-    side_core = 0
-    if fchars:
+    side = 0
+    side_surface = None
+    side_essence = None
+    if fchars and gchars:
+        side_essence = stroke_for_char(fchars[0], table) + stroke_for_char(gchars[-1], table)
+        side = side_essence
         if len(gchars) >= 2:
             side_surface = stroke_for_char(fchars[0], table) + stroke_for_char(gchars[1], table)
-        if gchars:
-            side_core = stroke_for_char(fchars[0], table) + stroke_for_char(gchars[-1], table)
-    side = max(side_surface, side_core)
 
     allv = strokes_of(f, table) + strokes_of(g, table)
 
-    return {
-        "トップ（天格）": top,
-        "ハート（人格）": heart,
-        "フット（地格）": foot,
-        "サイド（外格）": side,
-        "サイド（外格 表面）": side_surface,
-        "サイド（外格 本質）": side_core,
-        "オール（総格）": allv,
+    res = {
+        "top": top,
+        "heart": heart,
+        "foot": foot,
+        "side": side,
+        "allv": allv,
     }
+    if side_surface is not None:
+        res["side_alt"] = (side_surface, side_essence)
+    return res
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("-d", "--dict", required=True, help="kanji_master_xxx.csv")
+    ap.add_argument("-d", "--dict", required=True)
     ap.add_argument("-f", "--family", default="")
     ap.add_argument("-g", "--given", default="")
     args = ap.parse_args()
