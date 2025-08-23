@@ -24,7 +24,7 @@ if submitted and dict_name:
 
 side_text = str(res["side"])
 if res.get("side_alt"):
-    side_text = f'{res["side"]}（{res["side_alt"]}）'
+    side_text = f"{res['サイド（外格）']}（表面={res['サイド（外格 表面）']}, 本質={res['サイド（外格 本質）']}）"
 
 st.subheader("結果")
 st.metric("トップ（天格）", res["top"])
@@ -32,3 +32,4 @@ st.metric("ハート（人格）", res["heart"])
 st.metric("フット（地格）", res["foot"])
 st.metric("サイド（外格）", side_text)
 st.metric("オール（総格）", res["allv"])
+
