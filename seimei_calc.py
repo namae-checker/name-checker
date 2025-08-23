@@ -1,4 +1,3 @@
-
 import argparse
 import csv
 import sys
@@ -25,7 +24,6 @@ def _load_overrides():
 
 _KANJI_OVERRIDES = _load_overrides()
 
-
 VARIANT_MAP = {
     "髙": "高",
     "﨑": "崎",
@@ -35,7 +33,6 @@ VARIANT_MAP = {
 REPEAT_MARK = "々"
 
 def normalize_name(s: str) -> str:
-    # Unicode正規化→異体字マップ→繰返し記号の展開
     s = unicodedata.normalize("NFKC", s)
     chars = []
     for ch in s:
@@ -57,19 +54,18 @@ def load_dict(csv_path: str) -> dict:
             try:
                 d[k] = int(v)
             except:
-                # 未入力は0扱い（注意：後でCSVを直してください）
                 d[k] = 0
     return d
+
+def stroke_for_char(ch: str, table: dict) -> int:
+    if ch in _KANJI_OVERRIDES:
+        return _KANJI_OVERRIDES[ch]
+    return table.get(ch, 0)
 
 def strokes_of(name: str, table: dict) -> int:
     total = 0
     for ch in name:
-        # まずオーバーライド（kanji_overrides.csv）を確認
-        if ch in _KANJI_OVERRIDES:
-            total += _KANJI_OVERRIDES[ch]
-            continue
-        # 通常の辞書を使う
-        total += table.get(ch, 0)
+        total += stroke_for_char(ch, table)
     return total
 
 def calc(family: str, given: str, table: dict):
@@ -78,14 +74,28 @@ def calc(family: str, given: str, table: dict):
     fchars = list(f)
     gchars = list(g)
 
-    top = strokes_of(f, table)    # 天格（トップ）
-    foot = strokes_of(g, table)   # 地格（フット）
+    top = strokes_of(f, table)
+    foot = strokes_of(g, table)
+
     if fchars and gchars:
-        heart = table.get(fchars[-1], 0) + table.get(gchars[0], 0)  # 人格（ハート）
+        heart = stroke_for_char(fchars[-1], table) + stroke_for_char(gchars[0], table)
     else:
-        heart = top + foot  # フォールバック
-    allv = top + foot        # 総格（オール）
-    side = max(allv - heart, 0)  # 外格（サイド）
+        heart = top + foot
+
+    side_head = stroke_for_char(fchars[0], table) if fchars else 0
+    side_tail = stroke_for_char(gchars[-1], table) if gchars else 0
+
+    if len(fchars) == 1:
+        top += 1
+        side_head += 1
+
+    if len(gchars) == 1:
+        foot += 1
+        side_tail += 1
+
+    allv = strokes_of(f, table) + strokes_of(g, table)
+
+    side = side_head + side_tail
 
     return {
         "トップ(天格)": top,
