@@ -4,7 +4,7 @@ import streamlit as st
 from seimei_calc import calc, _load_dict
 
 st.set_page_config(page_title="姓名判断", layout="centered")
-st.title("姓名判断（5格）")
+st.title("姓名判断")
 
 # 利用可能な辞書ファイルをプルダウンに
 dict_files = [f for f in os.listdir(".") if f.startswith("kanji_master_") and f.endswith(".csv")]
@@ -37,4 +37,5 @@ if submitted and dict_name:
     st.metric("サイド（外格）", side_text)
 
     st.metric("オール（総格）", res["allv"])
+
 
