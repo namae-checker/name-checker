@@ -32,12 +32,13 @@ if submitted and dict_name:
 
     # サイド表示（3文字名の場合: 表面/本質 を併記）
     if "side_alt" in res:
-        surface, essence = res["side_alt"]
+        surface, essence = res["side_alt"]（表面={surface}, 本質={essence}）'
         side_text = f'{res["side"]}
     else:
         side_text = str(res["side"])
     st.metric("サイド（外格）", side_text)
 
     st.metric("オール（総格）", res["allv"])
+
 
 
