@@ -129,7 +129,7 @@ if submitted and dict_name:
         rows.append(("霊（末）", "1", 1, "※総格には含めない"))
 
     if rows:
-        st.subheader("文字ごとの内訳（霊数は総格には含めません）")
+        st.subheader("文字ごとの内訳（霊数がある場合、総格には含めません）")
         df = pd.DataFrame(rows, columns=["区分", "文字", "画数", "注記"])
         st.dataframe(df, hide_index=True, use_container_width=True)
 
@@ -138,4 +138,5 @@ else:
         st.info("kanji_master_*.csv の辞書ファイルが見つかりませんでした。リポジトリに追加してください。")
     else:
         st.caption("姓と名を入力して「計算する」を押してください。")
+
 
