@@ -1,18 +1,26 @@
 # -*- coding: utf-8 -*-
-import os
-import io
-import pandas as pd
 import streamlit as st
-from seimei_calc import load_dict, calc  # ← _load_dict は使わない
+import pandas as pd
 
-st.set_page_config(page_title="姓名判断（5格）", layout="wide")
+from seimei_calc import (
+    load_dict,
+    calc,
+    normalize_name,
+    stroke_for_char,
+)
+
+st.set_page_config(page_title="姓名判断（5格）", layout="centered")
 st.title("姓名判断（5格）")
 
-# 固定辞書: リポジトリ直下の kanji_master_joyo.csv を使う
-DICT_PATH = os.path.join(os.path.dirname(__file__), "kanji_master_joyo.csv")
+def fmt_expr(terms, total):
+    """
+    terms: List[Tuple[str, int]] を「字（画数）」の足し算式に整形
+    例: [("三",3),("野",11),("原",10)] -> "三（3）+野（11）+原（10）＝24"
+    """
+    lhs = " + ".join([f"{k}（{v}）" for k, v in terms])
+    return f"{lhs} ＝ {total}"
 
-# 入力UI
-with st.form("main_form"):
+with st.form("inputs"):
     col1, col2 = st.columns(2)
     with col1:
         family = st.text_input("姓", value="")
@@ -20,106 +28,134 @@ with st.form("main_form"):
         given = st.text_input("名", value="")
     submitted = st.form_submit_button("計算する")
 
-# 送信前は何も計算しない（NameError 回避）
-if not submitted:
-    st.info("姓名を入力して「計算する」を押してください。")
-    st.stop()
+if submitted:
+    try:
+        table = load_dict()  # 固定: kanji_master_joyo.csv
+        # まず既存ロジックで最終値を算出
+        res = calc(family, given, table)
 
-# ここから安全に計算
-try:
-    table = load_dict(DICT_PATH)
-except Exception as e:
-    st.error(f"辞書の読み込みに失敗しました: {e}")
-    st.stop()
+        # 計算式を作るため、ここでもう一度パーツ別に構築
+        f = normalize_name(family)
+        g = normalize_name(given)
+        fchars = list(f)
+        gchars = list(g)
+        fn, gn = len(fchars), len(gchars)
 
-res = calc(family, given, table)
+        rei_head = 1 if fn == 1 else 0
+        rei_tail = 1 if gn == 1 else 0
 
-# ---- 数値エリア（サマリー） -------------------------------------------------
-st.header("結果")
+        def term_char_list(chars):
+            return [(ch, stroke_for_char(ch, table)) for ch in chars]
 
-cols = st.columns(5)
-cols[0].metric("トップ（天格）", res["トップ（天格）"])
-cols[1].metric("ハート（人格）", res["ハート（人格）"])
-cols[2].metric("フット（地格）", res["フット（地格）"])
+        # トップ（天格）: 姓の合計 + 頭霊数
+        top_terms = []
+        if rei_head:
+            top_terms.append(("霊", 1))
+        top_terms += term_char_list(fchars)
 
-# サイドは「表面/本質」を可読表示
-side_surface = res.get("サイド（表面）")
-side_essence = res.get("サイド（本質）")
-side_main = res.get("サイド（外格）", side_essence if side_essence is not None else side_surface)
-side_label = f"{side_main}（表面={side_surface}, 本質={side_essence}）"
-cols[3].metric("サイド（外格）", side_label)
+        # ハート（人格）: 姓末字 + 名先頭字
+        heart_terms = []
+        if fn > 0 and gn > 0:
+            heart_terms = [
+                (fchars[-1], stroke_for_char(fchars[-1], table)),
+                (gchars[0], stroke_for_char(gchars[0], table)),
+            ]
 
-cols[4].metric("オール（総格）", res["オール（総格）"])
+        # フット（地格）: 名の合計 + ケツ霊数
+        foot_terms = term_char_list(gchars)
+        if rei_tail:
+            foot_terms += [("霊", 1)]
 
-# ---- 内訳テーブル -----------------------------------------------------------
-st.subheader("文字ごとの内訳（霊数も表示）")
-# res["breakdown"] は [(区分, 文字, 画数)] の想定
-bd = res.get("breakdown", [])
-if bd:
-    df = pd.DataFrame(bd, columns=["区分", "文字", "画数"])
-    st.dataframe(df, use_container_width=True)
+        # サイド（外格）: 規則によって表面式と本質式を作る
+        side_surface_expr = None
+        side_essence_expr = None
 
-# ---- 文字列展開の「実際の計算式」表示 ---------------------------------------
-def fmt_term(ch, strokes):
-    return f"{ch}（{strokes}）"
+        # 例外：姓・名ともに3文字以上 → 姓頭2 + 名末2（表面=本質）
+        if fn >= 3 and gn >= 3:
+            t = term_char_list(fchars[:2]) + term_char_list(gchars[-2:])
+            side_surface_expr = fmt_expr(t, res["サイド"])  # 同値
+            side_essence_expr = fmt_expr(t, res["サイド"])
 
-def join_terms(terms):
-    return " + ".join(terms)
+        # 姓が3文字以上 → 姓頭2 + 名末1（表面=本質）
+        elif fn >= 3 and gn >= 1:
+            t = term_char_list(fchars[:2]) + term_char_list(gchars[-1:])
+            if gn == 1 and rei_tail:
+                t += [("霊", 1)]
+            side_surface_expr = fmt_expr(t, res["サイド"])
+            side_essence_expr = fmt_expr(t, res["サイド"])
 
-eq_top = join_terms([fmt_term(*t) for t in res["_式"]["トップ"]]) + f" ＝ {res['トップ（天格）']}"
-eq_heart = join_terms([fmt_term(*t) for t in res["_式"]["ハート"]]) + f" ＝ {res['ハート（人格）']}"
-eq_foot = join_terms([fmt_term(*t) for t in res["_式"]["フット"]]) + f" ＝ {res['フット（地格）']}"
+        else:
+            # その他：名が3文字以上 → 表面: 姓1 + 名末2 / 本質: 姓1 + 名末1
+            # 姓1文字のときの「頭1」は霊数1
+            head_1 = [("霊", 1)] if fn == 1 else (term_char_list(fchars[:1]) if fn >= 1 else [])
 
-# サイド（表面／本質）
-eq_side_surface = join_terms([fmt_term(*t) for t in res["_式"]["サイド表面"]]) + f" ＝ {side_surface}"
-eq_side_essence = join_terms([fmt_term(*t) for t in res["_式"]["サイド本質"]]) + f" ＝ {side_essence}"
+            if gn >= 3:
+                essence_terms = head_1 + term_char_list(gchars[-1:])
+                surface_terms = head_1 + term_char_list(gchars[-2:])
+                side_essence_expr = fmt_expr(essence_terms, res["サイド（本質）"])
+                side_surface_expr = fmt_expr(surface_terms, res["サイド（表面）"])
 
-eq_all = join_terms([fmt_term(*t) for t in res["_式"]["オール"]]) + f" ＝ {res['オール（総格）']}"
+            elif gn == 2:
+                essence_terms = head_1 + term_char_list(gchars[-1:])
+                side_essence_expr = fmt_expr(essence_terms, res["サイド（本質）"])
+                side_surface_expr = side_essence_expr
 
-st.subheader("実際の計算式（テキスト）")
-st.write(f"トップ＝{eq_top}")
-st.write(f"ハート＝{eq_heart}")
-st.write(f"フット＝{eq_foot}")
-st.write(f"サイド（表面）＝{eq_side_surface}")
-st.write(f"サイド（本質）＝{eq_side_essence}")
-st.write(f"オール＝{eq_all}")
+            elif gn == 1:
+                essence_terms = head_1 + term_char_list(gchars[-1:])
+                if rei_tail:
+                    essence_terms += [("霊", 1)]
+                side_essence_expr = fmt_expr(essence_terms, res["サイド（本質）"])
+                side_surface_expr = side_essence_expr
 
-# ---- ブラケット図（簡易） ---------------------------------------------------
-import matplotlib
-matplotlib.use("Agg")  # サーバーでの描画安定化
-import matplotlib.pyplot as plt
+            else:
+                essence_terms = head_1
+                side_essence_expr = fmt_expr(essence_terms, res["サイド（本質）"])
+                side_surface_expr = side_essence_expr
 
-def draw_bracket_figure(res_dict):
-    fig, ax = plt.subplots(figsize=(8, 3), dpi=150)
-    ax.axis("off")
+        # オール（総格）: 姓+名（霊数は含めない）
+        all_terms = term_char_list(fchars) + term_char_list(gchars)
 
-    family_terms = [fmt_term(ch, s) for ch, s in res_dict["_式"]["姓"]]
-    given_terms  = [fmt_term(ch, s) for ch, s in res_dict["_式"]["名"]]
+        # ====== 画面表示 ======
+        st.subheader("結果（値）")
+        st.metric("トップ（天格）", res["トップ（天格）"])
+        st.metric("ハート（人格）", res["ハート（人格）"])
+        st.metric("フット（地格）", res["フット（地格）"])
 
-    top_v   = res_dict["トップ（天格）"]
-    heart_v = res_dict["ハート（人格）"]
-    foot_v  = res_dict["フット（地格）"]
-    side_v  = res_dict["サイド（外格）"]
-    all_v   = res_dict["オール（総格）"]
+        side = res.get("サイド", 0)
+        side_surf = res.get("サイド（表面）", None)
+        side_ess = res.get("サイド（本質）", None)
+        if side_surf is not None and side_ess is not None and side_surf != side_ess:
+            st.metric("サイド（外格）", f"{side}（表面={side_surf}, 本質={side_ess}）")
+        else:
+            st.metric("サイド（外格）", f"{side}")
 
-    y0 = 0.8
-    x0 = 0.05
-    dy = 0.18
+        st.metric("オール（総格）", res["オール（総格）"])
 
-    ax.text(x0, y0, "姓：" + "・".join(family_terms), fontsize=11, transform=ax.transAxes)
-    ax.text(x0, y0 - dy, "名：" + "・".join(given_terms), fontsize=11, transform=ax.transAxes)
+        st.subheader("結果（計算式）")
+        st.markdown(f"**トップ** ＝ {fmt_expr(top_terms, res['トップ（天格）'])}")
+        if heart_terms:
+            st.markdown(f"**ハート** ＝ {fmt_expr(heart_terms, res['ハート（人格）'])}")
+        else:
+            st.markdown("**ハート** ＝ （計算対象の字がありません）")
 
-    ax.text(0.55, y0,     f"トップ → {top_v}", fontsize=11, transform=ax.transAxes)
-    ax.text(0.55, y0-dy,  f"ハート → {heart_v}", fontsize=11, transform=ax.transAxes)
-    ax.text(0.55, y0-2*dy,f"フット → {foot_v}", fontsize=11, transform=ax.transAxes)
-    ax.text(0.55, y0-3*dy,f"サイド → {side_v}", fontsize=11, transform=ax.transAxes)
+        st.markdown(f"**フット** ＝ {fmt_expr(foot_terms, res['フット（地格）'])}")
 
-    ax.hlines(0.1, 0.05, 0.95, transform=ax.transAxes, color="black", linewidth=1.0)
-    ax.text(0.5, 0.04, f"オール → {all_v}", fontsize=11, ha="center", transform=ax.transAxes)
+        if side_surface_expr and side_essence_expr and side_surface_expr != side_essence_expr:
+            st.markdown(f"**サイド（表面）** ＝ {side_surface_expr}")
+            st.markdown(f"**サイド（本質）** ＝ {side_essence_expr}")
+        else:
+            # 同じ式の場合は1行で
+            st.markdown(f"**サイド** ＝ {side_essence_expr or side_surface_expr}")
 
-    return fig
+        st.markdown(f"**オール** ＝ {fmt_expr(all_terms, res['オール（総格）'])}")
 
-st.subheader("図解（ブラケット図）")
-fig = draw_bracket_figure(res)
-st.pyplot(fig)
-plt.close(fig)
+        # 文字内訳（霊数も列に出すが、オールには含めない旨を注記）
+        st.subheader("文字ごとの内訳（霊数は総格に含めません）")
+        rows = []
+        for kind, strokes, ch in res["内訳"]:
+            rows.append({"区分": kind, "文字": ch, "画数": strokes})
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"エラーが発生しました: {e}")
