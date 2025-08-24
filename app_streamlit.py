@@ -4,7 +4,14 @@ import csv
 import sys
 import unicodedata
 import streamlit as st
-import matplotlib.pyplot as plt
+
+# --- matplotlib は任意。無ければ図解表示をスキップ ---
+try:
+    import matplotlib.pyplot as plt
+    HAS_MPL = True
+except Exception:
+    plt = None
+    HAS_MPL = False
 
 # ======================================
 # 基本設定
@@ -151,19 +158,18 @@ def calc(family: str, given: str, table: dict) -> dict:
     # サイド（本質／表面）
     head = head_value_for_side(fchars, table)
     ess_tail = tail1_for_side(gchars, table)
-    surf_tail = None
 
     if len(fchars) >= 3 and len(gchars) >= 3:
-        # 例外：姓・名ともに3文字以上 → 頭2 + 末尾2 がサイド（表面）ルール
-        surf_tail = stroke_for_char(gchars[-2], table) + stroke_for_char(gchars[-1], table)
+        # 例外：姓・名とも3文字以上 → 頭2 + 末尾2 が表面
+        surf_tail_val = stroke_for_char(gchars[-2], table) + stroke_for_char(gchars[-1], table)
     else:
-        surf_tail = tail2_for_side(gchars, table)
+        surf_tail_val = tail2_for_side(gchars, table)
 
     side_ess = head + ess_tail
-    side_surface = head + surf_tail
+    side_surface = head + surf_tail_val
     side = max(side_ess, side_surface)
 
-    # オール（姓＋名合計。霊は含めない）>60 は 1 から
+    # オール（姓＋名合計。霊は含めない）
     allv = wrap_to_60(strokes_of(f, table) + strokes_of(g, table))
 
     return {
@@ -182,14 +188,9 @@ def calc(family: str, given: str, table: dict) -> dict:
 # 文字→式の表示支援
 # ======================================
 def fmt_terms(chars, table):
-    """[(表示, 画数), ...] を返す"""
-    out = []
-    for ch in chars:
-        out.append((ch, stroke_for_char(ch, table)))
-    return out
+    return [(ch, stroke_for_char(ch, table)) for ch in chars]
 
 def fmt_sum(terms, extra=None):
-    """[('原',10), ('野',11)] + [extra] → '原(10)+野(11)+霊(1)=21' のような文字列"""
     parts = [f"{ch}({st})" for ch, st in terms]
     if extra is not None:
         parts.append(f"{extra[0]}({extra[1]})")
@@ -218,8 +219,7 @@ def make_breakdown_text(f, g, table, res):
     foot_extra = ("霊", REI) if len(gchars) == 1 else None
     foot_line = f"フット ＝ {fmt_sum(foot_terms, foot_extra)}"
 
-    # サイド（本質/表面）
-    f_head_terms = []
+    # サイド（本質/表面）表示
     if len(fchars) >= 3:
         f_head_terms = [(fchars[0], stroke_for_char(fchars[0], table)),
                         (fchars[1], stroke_for_char(fchars[1], table))]
@@ -228,13 +228,11 @@ def make_breakdown_text(f, g, table, res):
     else:
         f_head_terms = [(fchars[0], stroke_for_char(fchars[0], table))]
 
-    # 本質=末尾1（名1文字の場合は霊）
     if len(gchars) == 1:
         ess_tail = [("霊", REI)]
     else:
         ess_tail = [(gchars[-1], stroke_for_char(gchars[-1], table))]
 
-    # 表面
     if len(fchars) >= 3 and len(gchars) >= 3:
         surf_tail = [
             (gchars[-2], stroke_for_char(gchars[-2], table)),
@@ -274,7 +272,7 @@ def make_breakdown_text(f, g, table, res):
     return [top_line, heart_line, foot_line, side_ess_line, side_surf_line, side_line, all_line]
 
 # ======================================
-# 図解（matplotlib）
+# 図解（matplotlib がある場合のみ）
 # ======================================
 def draw_layout_figure(family: str, given: str, table: dict, res: dict):
     fchars = list(family)
@@ -363,7 +361,6 @@ def draw_layout_figure(family: str, given: str, table: dict, res: dict):
 
     ax.plot([20, 80], [18, 18], color="black", lw=1)
     ax.text(50, 12, f"{res['オール（総格）']}  → オール・・・全体", ha="center", va="center", fontsize=12)
-
     ax.text(50, 5.5, "※霊は “1” の意。総格（オール）には含めません。", ha="center", va="center", fontsize=9, color="#444")
 
     fig.tight_layout()
@@ -429,8 +426,14 @@ if submitted:
         # --- 図解（ブラケット図） ---
         st.write("---")
         st.subheader("図解（ブラケット図）")
-        fig = draw_layout_figure(f, g, _KANJI, res)
-        st.pyplot(fig, use_container_width=True)
+        if HAS_MPL:
+            fig = draw_layout_figure(f, g, _KANJI, res)
+            st.pyplot(fig, use_container_width=True)
+        else:
+            st.info(
+                "図解の表示には matplotlib が必要です。"
+                "リポジトリの requirements.txt に `matplotlib` を追加して再デプロイしてください。"
+            )
 
     except Exception as e:
         st.error(f"計算時にエラーが発生しました: {e}")
