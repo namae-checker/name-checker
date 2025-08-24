@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
 import os
-import streamlit as st
-import pandas as pd
+import io
+import traceback
+
+# 重要: GUIバックエンドを強制（クラウド/サーバでも安全）
 import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from seimei_calc import calc_full, normalize_name
+import streamlit as st
+import pandas as pd
+
+from seimei_calc import calc_full
 
 # 日本語フォント（あるものが使われる）
 matplotlib.rcParams["font.family"] = [
@@ -14,24 +20,40 @@ matplotlib.rcParams["font.family"] = [
 ]
 
 
-# ========= 小さな UI ヘルパ =========
-def render_metric(label: str, value: int | str, sub: str | None = None):
-    html = f"""
-    <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid #ddd;border-radius:8px;">
-      <div style="font-size:13px;color:#666;">{label}</div>
-      <div style="font-size:40px;font-weight:700;line-height:1.0;">{value}</div>
-      {f'<div style="font-size:13px;color:#555;">{sub}</div>' if sub else ''}
-    </div>
+def preflight() -> list[str]:
     """
-    st.markdown(html, unsafe_allow_html=True)
+    代表的な落とし穴を事前チェックして、警告リストを返す。
+    """
+    warns = []
+
+    # CSVの所在チェック
+    root = os.path.dirname(__file__)
+    csv_base = os.path.join(root, "kanji_master_joyo.csv")
+    if not os.path.exists(csv_base):
+        warns.append("辞書ファイル `kanji_master_joyo.csv` が見つかりません。レポジトリ直下に置いてください。")
+
+    # 追加上書きは任意
+    csv_over = os.path.join(root, "kanji_overrides.csv")
+    if not os.path.exists(csv_over):
+        warns.append("`kanji_overrides.csv` は任意ですが、無ければこの警告は無視してOKです。")
+
+    # 依存の確認（importできたか）
+    try:
+        import numpy  # noqa: F401
+        import pandas  # noqa: F401
+        import matplotlib  # noqa: F401
+    except Exception as e:
+        warns.append(f"依存ライブラリの読み込みに失敗: {e}")
+
+    return warns
 
 
 def draw_bracket_figure(
-    family, given, parts,
+    family: str, given: str, parts: dict,
     family_labels: list[str], given_labels: list[str],
 ):
     """
-    ブラケット図（読みやすい固定レイアウト）
+    読みやすい固定レイアウトのブラケット図（Aggバックエンド）
     """
     fig = plt.figure(figsize=(9, 5), dpi=180)
     ax = fig.add_axes([0, 0, 1, 1])
@@ -40,7 +62,7 @@ def draw_bracket_figure(
     # タイトル
     ax.text(0.02, 0.93, f"{family}{given}　さんの姓名判断結果", fontsize=16, weight="bold")
     ax.text(0.02, 0.89, f"オール {parts['allv']}", fontsize=12)
-    if parts["all_expr"]:
+    if parts.get("all_expr"):
         ax.text(0.02, 0.865, parts["all_expr"], fontsize=11)
 
     # ブラケット
@@ -84,9 +106,27 @@ def draw_bracket_figure(
     return fig
 
 
-# ========= Streamlit UI =========
+def render_metric(label: str, value: int | str, sub: str | None = None):
+    html = f"""
+    <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid #ddd;border-radius:8px;">
+      <div style="font-size:13px;color:#666;">{label}</div>
+      <div style="font-size:40px;font-weight:700;line-height:1.0;">{value}</div>
+      {f'<div style="font-size:13px;color:#555;word-break:break-all;">{sub}</div>' if sub else ''}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# =========== UI ===========
 st.set_page_config(page_title="姓名判断（5格）", layout="wide")
 st.title("姓名判断（5格）")
+
+# 事前チェック
+warns = preflight()
+if warns:
+    with st.expander("環境チェック（必要なら確認してください）", expanded=False):
+        for w in warns:
+            st.write("•", w)
 
 with st.form("main"):
     colA, colB = st.columns(2)
@@ -96,10 +136,14 @@ with st.form("main"):
         given = st.text_input("名", value="正章")
     submitted = st.form_submit_button("計算する")
 
-if submitted:
+if not submitted:
+    st.info("姓と名を入力して「計算する」を押してください。辞書は `kanji_master_joyo.csv` を固定で使用し、`kanji_overrides.csv` があれば最優先で上書きされます。")
+    st.stop()
+
+# すべての例外をキャッチして、画面に詳細を表示
+try:
     res = calc_full(family, given)
 
-    # 上段：数式つきの大きな数字
     cols = st.columns(4)
     with cols[0]:
         render_metric("トップ（天格）", res["top"], sub=res["top_expr"])
@@ -119,12 +163,11 @@ if submitted:
     st.dataframe(df, hide_index=True, use_container_width=True)
 
     st.subheader("図解（ブラケット図）")
-    fig = draw_bracket_figure(
-        family, given,
-        res,
-        res["family_labels"],
-        res["given_labels"],
-    )
+    fig = draw_bracket_figure(family, given, res, res["family_labels"], res["given_labels"])
     st.pyplot(fig)
-else:
-    st.info("姓と名を入力して「計算する」を押してください。辞書は `kanji_master_joyo.csv` を使用し、必要があれば `kanji_overrides.csv` で個別上書きできます。")
+
+except Exception as e:
+    st.error("アプリ内で例外が発生しました。詳細ログを下に表示します。")
+    buf = io.StringIO()
+    traceback.print_exc(file=buf)
+    st.code(buf.getvalue(), language="text")
