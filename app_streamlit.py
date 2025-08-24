@@ -9,7 +9,7 @@ from seimei_calc import (
     stroke_for_char,
 )
 
-st.set_page_config(page_title="姓名判断（5格）", layout="centered")
+st.set_page_config(page_title="姓名判断", layout="centered")
 st.title("姓名判断（5格）")
 
 def fmt_expr(terms, total):
@@ -159,3 +159,4 @@ if submitted:
 
     except Exception as e:
         st.error(f"エラーが発生しました: {e}")
+
