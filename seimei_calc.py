@@ -1,47 +1,78 @@
 # -*- coding: utf-8 -*-
-import argparse
 import csv
 import os
-import sys
 import unicodedata
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 
-# -----------------------------
-# 文字個別オーバーライド（最優先）
-# -----------------------------
+# ====== 設定 ======
+DICT_FILE = "kanji_master_joyo.csv"     # 常にこの辞書を使用
+OVERRIDES_FILE = "kanji_overrides.csv"  # 存在すれば優先適用
+
+REPEAT_MARK = "々"
+VARIANT_MAP = {
+    # 必要に応じて異体字→正字体に正規化
+    "禎": "祓",
+    "琢": "琢",
+    "穀": "穀",
+    "祝": "祝",
+}
+
+# ====== ローダ ======
 def _load_overrides() -> Dict[str, int]:
-    path = os.path.join(os.path.dirname(__file__), "kanji_overrides.csv")
-    data: Dict[str, int] = {}
+    path = os.path.join(os.path.dirname(__file__), OVERRIDES_FILE)
+    data = {}
     try:
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+            rdr = csv.DictReader(f)
+            for row in rdr:
                 ch = (row.get("char") or "").strip()
-                st = (row.get("strokes") or "").strip()
-                if ch and st:
+                v  = (row.get("strokes") or "").strip()
+                if ch and v:
                     try:
-                        data[ch] = int(st)
+                        data[ch] = int(v)
                     except ValueError:
                         pass
     except FileNotFoundError:
         pass
     return data
 
-_KANJI_OVERRIDES: Dict[str, int] = _load_overrides()
+def load_dict() -> Dict[str, int]:
+    """kanji_master_joyo.csv を固定で読み込む"""
+    path = os.path.join(os.path.dirname(__file__), DICT_FILE)
+    d = {}
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        rdr = csv.DictReader(f)
+        # 既存辞書カラム例: kanji, strokes_old など
+        # プロジェクトのCSVに合わせて主要カラム名を抽出する
+        # 優先: strokes_old / strokes / count の順で探索
+        header = [c.strip().lower() for c in rdr.fieldnames or []]
+        if "kanji" not in header:
+            raise RuntimeError("CSVに 'kanji' 列が見つかりません: " + DICT_FILE)
 
-# -----------------------------
-# 表記ゆれ吸収
-# -----------------------------
-VARIANT_MAP = {
-    "禎": "祓",
-    "琢": "琢",
-    "穀": "穀",
-    "祝": "祝",
-}
-REPEAT_MARK = "々"
+        def pick(row, *cands):
+            for c in cands:
+                if c in row and (row[c] or "").strip():
+                    return (row[c] or "").strip()
+            return ""
 
+        for row in rdr:
+            r = {k.strip().lower(): (v or "").strip() for k, v in row.items()}
+            k = r.get("kanji", "")
+            if not k:
+                continue
+            v_str = pick(r, "strokes_old", "strokes", "count")
+            try:
+                d[k] = int(v_str)
+            except ValueError:
+                d[k] = 0
+    return d
+
+_KANJI_OVERRIDES = _load_overrides()
+
+
+# ====== 正規化 & 画数 ======
 def normalize_name(s: str) -> str:
-    s = unicodedata.normalize("NFKC", s)
+    s = unicodedata.normalize("NFKC", s or "")
     out: List[str] = []
     for ch in s:
         ch = VARIANT_MAP.get(ch, ch)
@@ -50,167 +81,135 @@ def normalize_name(s: str) -> str:
         out.append(ch)
     return "".join(out)
 
-# -----------------------------
-# 辞書読み込み（kanji, strokes_old）
-# -----------------------------
-def load_dict(csv_path: str) -> Dict[str, int]:
-    d: Dict[str, int] = {}
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        for r in reader:
-            k = (r.get("kanji") or "").strip()
-            v = (r.get("strokes_old") or "").strip()
-            if not k:
-                continue
-            try:
-                d[k] = int(v)
-            except Exception:
-                d[k] = 0
-    return d
-
-# -----------------------------
-# 画数取得
-# -----------------------------
 def stroke_for_char(ch: str, table: Dict[str, int]) -> int:
     if ch in _KANJI_OVERRIDES:
         return _KANJI_OVERRIDES[ch]
     return table.get(ch, 0)
 
-def strokes_sum(chars: List[str], table: Dict[str, int]) -> int:
-    return sum(stroke_for_char(c, table) for c in chars)
-
-# -----------------------------
-# サイド（外格）計算：表面/本質
-# ルール（最終）に対応：
-#  - 名が3文字以上：表面=頭1 + 末尾2、 本質=頭1 + 末尾1
-#  - ただし 例外：姓/名とも3文字以上 → サイド=頭2 + 末尾2（単一値）
-#  - 姓が3文字以上：サイド=頭2 + 末尾1
-#  - 名が1文字：末尾は霊数1を用いる
-#  - 姓が1文字：頭は霊数1を用いる
-# -----------------------------
-def _side_values(
-    fchars: List[str],
-    gchars: List[str],
-    table: Dict[str, int],
-    reisu_head: int,
-    reisu_tail: int,
-) -> Tuple[int, Optional[int]]:
-    lf = len(fchars)
-    lg = len(gchars)
-
-    def head1() -> int:
-        # 姓が1文字 → 霊数1、そうでなければ姓先頭の画数
-        if lf == 0:
-            return 0
-        return reisu_head if lf == 1 else stroke_for_char(fchars[0], table)
-
-    def head2() -> int:
-        # 頭2文字（呼ばれるのは lf >= 3 の条件下）
-        return stroke_for_char(fchars[0], table) + stroke_for_char(fchars[1], table)
-
-    def tail1() -> int:
-        # 名の末尾1文字。名1文字のときは霊数1を使う。
-        if lg == 0:
-            return 0
-        if lg == 1:
-            return reisu_tail
-        return stroke_for_char(gchars[-1], table)
-
-    def tail2_sum() -> int:
-        # 名の末尾2文字（呼ばれるのは lg >= 3 の条件下）
-        return stroke_for_char(gchars[-2], table) + stroke_for_char(gchars[-1], table)
-
-    # 例外：姓・名ともに3文字以上 → サイドは「頭2 + 末尾2」の単一値
-    if lf >= 3 and lg >= 3:
-        side = head2() + tail2_sum()
-        return side, None
-
-    # 姓が3文字以上 → サイドは「頭2 + 末尾1」
-    if lf >= 3:
-        side = head2() + tail1()
-        return side, None
-
-    # 名が3文字以上（姓は1 or 2）
-    if lg >= 3:
-        h = head1()
-        essential = h + tail1()           # 本質：頭1 + 末尾1
-        surface   = h + tail2_sum()       # 表面：頭1 + 末尾2
-        return essential, surface
-
-    # それ以外（名が2文字以下）
-    #   - 名1文字なら末尾=霊数1
-    #   - 姓1文字なら頭=霊数1
-    side = head1() + tail1()
-    return side, None
-
-# -----------------------------
-# 総格の 60 超リセット（>60 のとき再び 1 から）
-# 例：63 → 3、 60 は 60 のまま
-# -----------------------------
-def wrap60(total: int) -> int:
-    if total > 60:
-        # 61→1, 62→2, ... 120→60
-        return ((total - 1) % 60) + 1
+def strokes_of(name: str, table: Dict[str, int]) -> int:
+    total = 0
+    for ch in name:
+        total += stroke_for_char(ch, table)
     return total
 
-# -----------------------------
-# 5格メイン計算
-# -----------------------------
-def calc(family: str, given: str, table: Dict[str, int]) -> Dict[str, int]:
+
+# ====== サイド計算のユーティリティ ======
+def _sum_first(chars: List[str], n: int, table: Dict[str, int]) -> int:
+    return sum(stroke_for_char(c, table) for c in chars[:n])
+
+def _sum_last(chars: List[str], n: int, table: Dict[str, int]) -> int:
+    return sum(stroke_for_char(c, table) for c in chars[-n:]) if n > 0 else 0
+
+
+def calc(
+    family: str,
+    given: str,
+    table: Dict[str, int],
+) -> Dict[str, int | str | List[Tuple[str, int, str]]]:
+    """
+    ルール（ユーザー定義）に従って 5数を算出する:
+    - 霊数は総画(オール)に含めない
+    - 霊数の付与位置:
+        姓が1文字 → 頭に+1
+        名が1文字 → ケツに+1
+    - サイド:
+        4) 名が3文字以上 → 表面: 姓1 + 名末2, 本質: 姓1 + 名末1
+           例外) 姓・名ともに3文字以上 → サイド = 姓頭2 + 名末2（表面=本質）
+        5) 姓が3文字以上 → サイド = 姓頭2 + 名末1（表面=本質）
+        付記) 姓1文字＋名3文字 → サイド: 表面=霊数1 + 名末2 / 本質=霊数1 + 名末1
+        付記) 名1文字 → ケツ霊数をサイドにも反映（姓1=霊、名1=霊の合算）
+    - 総画 > 60 は 1 からカウントし直し (61→1, 62→2, ...)
+    """
+
     f = normalize_name(family)
     g = normalize_name(given)
     fchars = list(f)
     gchars = list(g)
-    lf, lg = len(fchars), len(gchars)
+    fn, gn = len(fchars), len(gchars)
 
-    # 霊数（総格/人格には入れない）
-    reisu_head = 1 if lf == 1 else 0  # 姓1文字→頭に1
-    reisu_tail = 1 if lg == 1 else 0  # 名1文字→末尾に1
+    # 霊数の付与
+    rei_head = 1 if fn == 1 else 0
+    rei_tail = 1 if gn == 1 else 0
 
     # トップ（天格）
-    top = strokes_sum(fchars, table) + reisu_head
+    top = strokes_of(f, table) + rei_head
 
-    # ハート（人格）…姓末字 + 名先頭（霊数なし）
-    if lf > 0 and lg > 0:
+    # ハート（人格）
+    heart = 0
+    if fn > 0 and gn > 0:
         heart = stroke_for_char(fchars[-1], table) + stroke_for_char(gchars[0], table)
-    else:
-        heart = 0
 
     # フット（地格）
-    foot = strokes_sum(gchars, table) + reisu_tail
+    foot = strokes_of(g, table) + rei_tail
 
-    # サイド（外格）
-    side_essential, side_surface = _side_values(fchars, gchars, table, reisu_head, reisu_tail)
+    # サイド（外格）: 表面/本質の両方を可能なら計算
+    side_surface = None
+    side_essence = None
 
-    # オール（総格）…霊数なし → 60超は再カウント
-    all_total = strokes_sum(fchars, table) + strokes_sum(gchars, table)
-    allv = wrap60(all_total)
+    # 例外：姓・名ともに3文字以上 → サイド=姓頭2+名末2（表面=本質）
+    if fn >= 3 and gn >= 3:
+        v = _sum_first(fchars, 2, table) + _sum_last(gchars, 2, table)
+        side_essence = side_surface = v
 
-    res: Dict[str, int] = {
+    # 姓が3文字以上 → サイド=姓頭2+名末1（表面=本質）
+    elif fn >= 3 and gn >= 1:
+        v = _sum_first(fchars, 2, table) + _sum_last(gchars, 1, table)
+        # 名1文字ならケツ霊数も乗る
+        if gn == 1:
+            v += rei_tail
+        side_essence = side_surface = v
+
+    else:
+        # それ以外の基本（名が3文字以上なら 表面/本質）
+        # 表面: 姓1 + 名末2／本質: 姓1 + 名末1
+        # 姓1文字の場合は頭は霊数1
+        head_1 = rei_head if fn == 1 else (_sum_first(fchars, 1, table) if fn >= 1 else 0)
+
+        if gn >= 3:
+            tail_1 = _sum_last(gchars, 1, table)
+            tail_2 = _sum_last(gchars, 2, table)
+            # 名1文字のケースはここに来ないが、念のため
+            side_essence = head_1 + tail_1
+            side_surface = head_1 + tail_2
+
+        elif gn == 2:
+            tail_1 = _sum_last(gchars, 1, table)
+            side_essence = head_1 + tail_1
+            side_surface = side_essence  # 表面は定義なし→同値扱い
+
+        elif gn == 1:
+            tail_1 = _sum_last(gchars, 1, table)
+            side_essence = head_1 + tail_1 + rei_tail  # ケツ霊数も乗る
+            side_surface = side_essence
+
+        else:
+            side_essence = head_1
+            side_surface = head_1
+
+    # 総画（オール）は霊数を含めない
+    allv_raw = strokes_of(f, table) + strokes_of(g, table)
+    # 60 超過なら 1 から数え直し（61→1）
+    allv = ((allv_raw - 1) % 60) + 1 if allv_raw > 60 else allv_raw
+
+    # 文字内訳（霊数は別途表記）
+    breakdown: List[Tuple[str, int, str]] = []
+    for ch in fchars:
+        breakdown.append(("姓", stroke_for_char(ch, table), ch))
+    for ch in gchars:
+        breakdown.append(("名", stroke_for_char(ch, table), ch))
+    # 霊数の見える化（集計に含めない）
+    if rei_head:
+        breakdown.append(("霊", 1, "頭"))
+    if rei_tail:
+        breakdown.append(("霊", 1, "末"))
+
+    return {
         "トップ（天格）": top,
         "ハート（人格）": heart,
         "フット（地格）": foot,
-        "サイド（外格・本質）": side_essential,
+        "サイド": max(side_essence, 0),
+        "サイド（表面）": side_surface,
+        "サイド（本質）": side_essence,
         "オール（総格）": allv,
+        "内訳": breakdown,
     }
-    if side_surface is not None:
-        res["サイド（外格・表面）"] = side_surface
-    return res
-
-# -----------------------------
-# CLI（任意）
-# -----------------------------
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("-d", "--dict", required=True, help="kanji_master_xxx.csv")
-    ap.add_argument("-f", "--family", default="")
-    ap.add_argument("-g", "--given", default="")
-    args = ap.parse_args()
-
-    table = load_dict(args.dict)
-    out = calc(args.family, args.given, table)
-    for k, v in out.items():
-        print(f"{k}: {v}")
-
-if __name__ == "__main__":
-    main()
