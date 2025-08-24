@@ -7,7 +7,6 @@ import streamlit as st
 import pandas as pd
 
 # ---- seimei_calc から計算関数と辞書ローダを取り込む ---------------------------------
-# どちらの命名でも動くようにフォールバックを用意
 try:
     from seimei_calc import calc, load_dict as _load_dict
 except ImportError:
@@ -46,7 +45,6 @@ def load_overrides(path: str = "kanji_overrides.csv") -> Dict[str, int]:
                 except ValueError:
                     pass
     except Exception:
-        # 読み込み失敗時は空のまま返す
         return {}
     return data
 
@@ -71,15 +69,15 @@ with st.form("name_form"):
 
 # ---- 計算実行 ------------------------------------------------------------------------
 if submitted and dict_name:
-    # 画数辞書 & オーバーライドをロード
     table = _load_dict(dict_name)
     overrides = load_overrides()
 
-    # 5格計算（霊数ルール・サイドの表面/本質などは seimei_calc.calc 側に実装）
+    # seimei_calc.calc 側に霊数ルール・サイド(表面/本質)など実装済み
     res = calc(family, given, table)
 
-    # ---- 集計の表示（サイドは表面/本質を併記） --------------------------------------
     st.subheader("結果")
+
+    # --- 5格（メトリクス）
     top = res.get("トップ（天格）", 0)
     heart = res.get("ハート（人格）", 0)
     foot = res.get("フット（地格）", 0)
@@ -91,29 +89,51 @@ if submitted and dict_name:
     st.metric("ハート（人格）", heart)
     st.metric("フット（地格）", foot)
 
-    if side_surface is not None:
-        # 例：21（表面=19, 本質=21）
+    # 霊数が効いているか（姓1文字 → 頭1、名1文字 → 末1）
+    use_head_rei = len(family.strip()) == 1 and len(family.strip()) > 0
+    use_tail_rei = len(given.strip()) == 1 and len(given.strip()) > 0
+
+    rei_note_parts: List[str] = []
+    if use_head_rei:
+        rei_note_parts.append("頭1")
+    if use_tail_rei:
+        rei_note_parts.append("末1")
+    rei_note = "、".join(rei_note_parts)
+
+    if side_surface is not None and rei_note:
+        st.metric("サイド（外格）", f"{side_main}（表面={side_surface}, 本質={side_main}, 霊数={rei_note}）")
+    elif side_surface is not None:
         st.metric("サイド（外格）", f"{side_main}（表面={side_surface}, 本質={side_main}）")
+    elif rei_note:
+        st.metric("サイド（外格）", f"{side_main}（霊数={rei_note}）")
     else:
         st.metric("サイド（外格）", side_main)
 
     st.metric("オール（総格）", allv)
 
-    # ---- 文字ごとの内訳（霊数は表示に含めない） -------------------------------------
-    # 画面に示す内訳は「姓/名の各文字とその画数」。霊数は明細に含めない。
-    rows: List[Tuple[str, str, int]] = []
+    # --- 文字ごとの内訳（霊数も表示。ただし総格には含めないことを注記）
+    rows: List[Tuple[str, str, int, str]] = []
+
     for ch in family:
-        rows.append(("姓", ch, stroke_for_char(ch, table, overrides)))
+        rows.append(("姓", ch, stroke_for_char(ch, table, overrides), ""))
+
+    # 霊数（頭）
+    if use_head_rei:
+        rows.append(("霊（頭）", "1", 1, "※総格には含めない"))
+
     for ch in given:
-        rows.append(("名", ch, stroke_for_char(ch, table, overrides)))
+        rows.append(("名", ch, stroke_for_char(ch, table, overrides), ""))
+
+    # 霊数（末）
+    if use_tail_rei:
+        rows.append(("霊（末）", "1", 1, "※総格には含めない"))
 
     if rows:
-        st.subheader("文字ごとの内訳（霊数は表示に含めません）")
-        df = pd.DataFrame(rows, columns=["区分", "文字", "画数"])
+        st.subheader("文字ごとの内訳（霊数も表示しますが総格には含めません）")
+        df = pd.DataFrame(rows, columns=["区分", "文字", "画数", "注記"])
         st.dataframe(df, hide_index=True, use_container_width=True)
 
 else:
-    # 初期状態や辞書未選択時の注意
     if not dict_files:
         st.info("kanji_master_*.csv の辞書ファイルが見つかりませんでした。リポジトリに追加してください。")
     else:
